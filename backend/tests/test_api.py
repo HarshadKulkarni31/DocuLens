@@ -65,3 +65,4 @@ def test_upload_and_delete_document():
     # Test 404 after delete
     get_res = client.post(f"/api/documents/{doc_id}/summary")
     assert get_res.status_code == 404
+

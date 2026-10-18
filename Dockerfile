@@ -38,3 +38,4 @@ ENV PYTHONPATH=/app/backend
 
 # Run application with Uvicorn
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+

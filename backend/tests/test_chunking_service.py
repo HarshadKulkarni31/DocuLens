@@ -32,3 +32,4 @@ def test_chunking_skips_empty_pages():
     assert len(chunks) == 1
     assert chunks[0].page_number == 2
     assert "Hello world from page 2" in chunks[0].text
+

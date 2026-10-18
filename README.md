@@ -179,11 +179,23 @@ Open `http://localhost:5173` in your browser.
 
 ---
 
-## 🧪 Running Tests
+## 🧪 Running Tests & Evaluation Benchmark
 Execute the automated test suite covering PDF validation, chunking, retrieval, and API endpoints:
 ```bash
 cd backend
 pytest tests -v
+```
+
+### 📊 RAG Retrieval Evaluation Benchmark
+The test suite includes a dedicated RAG evaluation benchmark (`tests/test_rag_pipeline.py`) validating retrieval accuracy, source page citations, and out-of-domain rejection against the sample document:
+```bash
+pytest tests/test_rag_pipeline.py -v
+```
+
+### 📄 Sample Document Included
+A multi-page sample report is included at `sample_documents/solarpulse_technical_report.pdf`. You can drag-and-drop this directly into the DocuLens UI to test the pipeline immediately! To regenerate or modify it:
+```bash
+python scripts/generate_sample_pdf.py
 ```
 
 ---
@@ -228,3 +240,4 @@ Navigate to `http://localhost:7860`.
 
 ## 📄 License
 MIT License. Created for portfolio and hands-on document intelligence demonstration.
+

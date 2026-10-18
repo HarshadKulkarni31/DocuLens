@@ -37,3 +37,4 @@ def test_invalid_pdf_bytes_raises_400():
     with pytest.raises(HTTPException) as excinfo:
         PDFService.extract_text_by_pages(b"Not a real pdf")
     assert excinfo.value.status_code == 400
+
