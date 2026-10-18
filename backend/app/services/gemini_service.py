@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from typing import List, Dict, Any, Tuple
 from fastapi import HTTPException, status
@@ -17,12 +18,11 @@ class GeminiService:
         if not self.api_key or self.api_key.strip() == "" or "replace_with" in self.api_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Gemini API key is not configured. Please set GEMINI_API_KEY in the environment.",
+                detail="Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env.",
             )
 
         if self._client is None:
             try:
-                # Prefer google-genai official client
                 from google import genai
                 self._client = genai.Client(api_key=self.api_key)
             except Exception as e:
@@ -33,18 +33,72 @@ class GeminiService:
                 )
         return self._client
 
+    def _generate_with_retry(self, prompt: str) -> str:
+        """
+        Executes generation with retry and fallback across candidate models.
+        Handles temporary 503 high demand spikes and model version migrations.
+        """
+        client = self._get_client()
+
+        # Build prioritized candidate model list (deduplicated)
+        candidates = []
+        for m in [self.model, "gemini-3.8-flash", "gemini-flash-latest"]:
+            if m and m not in candidates:
+                candidates.append(m)
+
+        last_error = None
+
+        for model_id in candidates:
+            for attempt in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=prompt,
+                    )
+                    return response.text or ""
+                except Exception as e:
+                    last_error = e
+                    err_str = str(e)
+                    logger.warning(
+                        f"Attempt {attempt + 1} with model {model_id} failed: {err_str}"
+                    )
+                    # If temporary 503 unavailable, wait briefly and retry
+                    if "503" in err_str or "demand" in err_str.lower():
+                        time.sleep(1.5)
+                        continue
+                    # If 404 model not found / deprecated, immediately try next candidate model
+                    if "404" in err_str:
+                        break
+                    # Otherwise wait slightly before trying candidate
+                    time.sleep(1.0)
+
+        # All candidates/retries exhausted
+        err_msg = str(last_error) if last_error else "Unknown generation error"
+        if "quota" in err_msg.lower() or "429" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Gemini API rate limit or quota exceeded. Please try again in a few moments.",
+            )
+        if "503" in err_msg or "demand" in err_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Gemini API is currently experiencing high demand. Please retry in a few seconds.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Gemini generation error: {err_msg}",
+        )
+
     def generate_summary(self, pages: List[Dict[str, Any]]) -> Tuple[str, List[str]]:
         """
         Generates a concise summary and key takeaways from document pages.
         For longer documents, summarizes in bounded batches and then synthesizes.
         """
-        client = self._get_client()
-
         # Combine text bounded to prevent context overflow
         full_text = "\n\n".join([f"--- Page {p['page_number']} ---\n{p['text']}" for p in pages])
-        
-        # If document is extremely large, cap it to ~25,000 characters for the summary context
-        max_summary_chars = 30000
+
+        # Cap text to ~25,000 characters for the summary context
+        max_summary_chars = 25000
         truncated = False
         if len(full_text) > max_summary_chars:
             full_text = full_text[:max_summary_chars]
@@ -65,53 +119,32 @@ DOCUMENT CONTENT:
 {full_text}
 \"\"\"
 """
-        try:
-            response = client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-            )
-            raw_text = response.text or ""
-            
-            # Extract summary and key points
-            lines = raw_text.splitlines()
-            key_points = []
-            summary_lines = []
-            in_key_points = False
+        raw_text = self._generate_with_retry(prompt)
 
-            for line in lines:
-                stripped = line.strip()
-                if stripped.startswith("- ") or stripped.startswith("* "):
-                    in_key_points = True
-                    cleaned_point = stripped.lstrip("-* ").strip()
-                    if cleaned_point:
-                        key_points.append(cleaned_point)
-                elif in_key_points and stripped and not stripped.startswith("#"):
-                    # continuing previous point
-                    if key_points:
-                        key_points[-1] += " " + stripped
-                else:
-                    summary_lines.append(line)
+        # Extract summary and key points
+        lines = raw_text.splitlines()
+        key_points = []
+        summary_lines = []
+        in_key_points = False
 
-            summary_text = "\n".join(summary_lines).strip()
-            if not summary_text:
-                summary_text = raw_text.strip()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- ") or stripped.startswith("* "):
+                in_key_points = True
+                cleaned_point = stripped.lstrip("-* ").strip()
+                if cleaned_point:
+                    key_points.append(cleaned_point)
+            elif in_key_points and stripped and not stripped.startswith("#"):
+                if key_points:
+                    key_points[-1] += " " + stripped
+            else:
+                summary_lines.append(line)
 
-            return summary_text, key_points
+        summary_text = "\n".join(summary_lines).strip()
+        if not summary_text:
+            summary_text = raw_text.strip()
 
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Gemini API error during summary generation: {e}")
-            err_msg = str(e)
-            if "quota" in err_msg.lower() or "429" in err_msg:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Gemini API rate limit or quota exceeded. Please try again shortly.",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Gemini generation error: {err_msg}",
-            )
+        return summary_text, key_points
 
     def answer_question(self, question: str, retrieved_chunks: List[Tuple[Chunk, float]]) -> Tuple[str, List[Dict[str, Any]]]:
         """
@@ -123,8 +156,6 @@ DOCUMENT CONTENT:
                 "The document does not contain enough relevant information to answer this question.",
                 [],
             )
-
-        client = self._get_client()
 
         # Build context blocks with explicit IDs
         context_blocks = []
@@ -155,37 +186,17 @@ QUESTION:
 
 HELPFUL GROUNDED ANSWER:"""
 
-        try:
-            response = client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-            )
-            answer = (response.text or "").strip()
+        raw_answer = self._generate_with_retry(prompt)
+        answer = raw_answer.strip()
 
-            # Map retrieved chunks to source metadata
-            sources = []
-            for chunk, _ in retrieved_chunks:
-                # excerpt: first 180 characters of chunk
-                excerpt = chunk.text[:180].strip() + ("..." if len(chunk.text) > 180 else "")
-                sources.append({
-                    "chunk_id": chunk.chunk_id,
-                    "page_number": chunk.page_number,
-                    "excerpt": excerpt,
-                })
+        # Map retrieved chunks to source metadata
+        sources = []
+        for chunk, _ in retrieved_chunks:
+            excerpt = chunk.text[:180].strip() + ("..." if len(chunk.text) > 180 else "")
+            sources.append({
+                "chunk_id": chunk.chunk_id,
+                "page_number": chunk.page_number,
+                "excerpt": excerpt,
+            })
 
-            return answer, sources
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Gemini API error during Q&A: {e}")
-            err_msg = str(e)
-            if "quota" in err_msg.lower() or "429" in err_msg:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Gemini API rate limit or quota exceeded. Please try again shortly.",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Gemini generation error: {err_msg}",
-            )
+        return answer, sources

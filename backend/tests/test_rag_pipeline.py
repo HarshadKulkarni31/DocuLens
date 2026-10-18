@@ -105,3 +105,4 @@ def test_evaluation_question_retrieval(indexed_document, item):
         assert item["expected_token"].lower() in combined_text.lower(), (
             f"Expected token '{item['expected_token']}' not found in retrieved text for question '{item['question']}'"
         )
+

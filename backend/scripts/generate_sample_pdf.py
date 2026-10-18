@@ -85,3 +85,4 @@ if __name__ == "__main__":
     out_dir = Path(__file__).resolve().parent.parent.parent / "sample_documents"
     pdf_file = out_dir / "solarpulse_technical_report.pdf"
     create_sample_pdf(str(pdf_file))
+
