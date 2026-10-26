@@ -107,7 +107,11 @@ export default function SummaryPanel({ activeDoc, onError }) {
         <div className="summary-error">
           <AlertCircle size={20} />
           <div>
-            <p className="error-text">{error}</p>
+            <p className="error-text">
+              {error.includes('rate limit') || error.includes('quota') || error.includes('429')
+                ? 'Gemini free-tier rate limit reached. Please wait a few moments and click retry.'
+                : error}
+            </p>
             <button type="button" className="retry-link" onClick={handleRegenerate}>
               Click to retry
             </button>
