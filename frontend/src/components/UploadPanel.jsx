@@ -72,9 +72,11 @@ export default function UploadPanel({
   const processFile = async (file) => {
     clearError();
 
-    // Client-side validation
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      onError('Please upload a valid PDF file (.pdf extension).');
+    // Client-side validation: PDF, CSV, TSV, JSON, TXT, MD
+    const supportedExtensions = ['.pdf', '.csv', '.tsv', '.json', '.txt', '.md'];
+    const hasValidExt = supportedExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
+    if (!hasValidExt) {
+      onError('Please upload a supported document format (.pdf, .csv, .tsv, .json, .txt, or .md).');
       return;
     }
 
@@ -149,7 +151,7 @@ export default function UploadPanel({
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
-        accept=".pdf,application/pdf"
+        accept=".pdf,.csv,.tsv,.json,.txt,.md,application/pdf,text/csv,text/plain,application/json"
         style={{ display: 'none' }}
         aria-hidden="true"
       />
@@ -171,7 +173,7 @@ export default function UploadPanel({
           }}
           role="button"
           tabIndex={0}
-          aria-label="Upload PDF Document"
+          aria-label="Upload Document or Dataset"
         >
           {isUploading ? (
             <div className="upload-loading">
@@ -184,12 +186,12 @@ export default function UploadPanel({
               <div className="icon-wrapper">
                 <UploadCloud size={40} className="upload-icon" />
               </div>
-              <h3 className="dropzone-title">Upload a PDF Document</h3>
+              <h3 className="dropzone-title">Upload a Document or Dataset</h3>
               <p className="dropzone-subtitle">
                 Drag and drop your file here, or <span className="highlight-text">browse</span>
               </p>
               <div className="file-constraints">
-                <span>PDF up to 15MB</span> • <span>Text-based PDFs with selectable text</span>
+                <span>PDF, CSV, JSON, TXT, or MD up to 15MB</span> • <span>Structured & Unstructured Intelligence</span>
               </div>
             </div>
           )}

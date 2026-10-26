@@ -174,8 +174,8 @@ def extract_document(file: UploadFile = File(...)):
     Validates and extracts raw text page by page from an uploaded PDF.
     Does not index or store the document.
     """
-    pdf_bytes = pdf_service.validate_and_read(file)
-    pages, total_chars = pdf_service.extract_text_by_pages(pdf_bytes)
+    file_bytes = pdf_service.validate_and_read(file)
+    pages, total_chars = pdf_service.extract_document(file_bytes, filename=file.filename or "unknown.pdf")
 
     page_extracts = [
         PageExtract(page_number=p["page_number"], text=p["text"]) for p in pages
@@ -199,8 +199,8 @@ def upload_document(file: UploadFile = File(...)):
     4. Persists document, chunks, and embeddings to SQLite database.
     5. Registers document in memory for fast Q&A and summary queries.
     """
-    pdf_bytes = pdf_service.validate_and_read(file)
-    pages, total_chars = pdf_service.extract_text_by_pages(pdf_bytes)
+    file_bytes = pdf_service.validate_and_read(file)
+    pages, total_chars = pdf_service.extract_document(file_bytes, filename=file.filename or "unknown.pdf")
 
     doc_id = str(uuid.uuid4())
 
@@ -235,7 +235,7 @@ def upload_document(file: UploadFile = File(...)):
             "summary": None,
             "key_points": None,
         },
-        file_size=len(pdf_bytes),
+        file_size=len(file_bytes),
     )
 
     return DocumentUploadResponse(
@@ -243,7 +243,7 @@ def upload_document(file: UploadFile = File(...)):
         filename=file.filename or "uploaded.pdf",
         page_count=len(pages),
         chunk_count=len(chunks),
-        file_size=len(pdf_bytes),
+        file_size=len(file_bytes),
         status="ready",
     )
 

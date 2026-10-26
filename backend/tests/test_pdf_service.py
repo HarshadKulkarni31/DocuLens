@@ -38,3 +38,29 @@ def test_invalid_pdf_bytes_raises_400():
         PDFService.extract_text_by_pages(b"Not a real pdf")
     assert excinfo.value.status_code == 400
 
+
+def test_extract_csv_structured_data():
+    csv_content = b"id,name,role,salary\n1,Alice,Engineer,120000\n2,Bob,Product Manager,135000\n"
+    pages, total_chars = PDFService.extract_document(csv_content, filename="employees.csv")
+    assert len(pages) == 1
+    assert "Alice" in pages[0]["text"]
+    assert "Product Manager" in pages[0]["text"]
+    assert total_chars > 0
+
+
+def test_extract_json_structured_data():
+    json_content = b'[{"project": "DocuLens", "type": "RAG", "stars": 500}]'
+    pages, total_chars = PDFService.extract_document(json_content, filename="data.json")
+    assert len(pages) == 1
+    assert "DocuLens" in pages[0]["text"]
+    assert total_chars > 0
+
+
+def test_extract_plain_text():
+    text_content = b"This is a plain text document.\n\nIt contains multiple paragraphs for RAG retrieval."
+    pages, total_chars = PDFService.extract_document(text_content, filename="notes.txt")
+    assert len(pages) == 1
+    assert "plain text document" in pages[0]["text"]
+    assert total_chars > 0
+
+

@@ -55,12 +55,24 @@ def test_extract_endpoint_valid():
 def test_extract_invalid_extension():
     file = UploadFile(
         file=io.BytesIO(b"hello world"),
-        filename="sample.txt",
+        filename="sample.exe",
     )
     with pytest.raises(HTTPException) as exc:
         extract_document(file=file)
     assert exc.value.status_code == 400
-    assert "Only PDF files are supported" in exc.value.detail
+    assert "Unsupported file format" in exc.value.detail
+
+
+def test_upload_and_extract_csv():
+    csv_bytes = b"Product,Price,Quantity\nLaptop,1200,5\nMouse,25,50\n"
+    file = UploadFile(
+        file=io.BytesIO(csv_bytes),
+        filename="products.csv",
+    )
+    res = upload_document(file=file)
+    assert res.filename == "products.csv"
+    assert res.chunk_count > 0
+    delete_document(res.document_id)
 
 
 def test_upload_and_delete_document():
