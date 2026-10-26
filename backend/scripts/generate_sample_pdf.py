@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
-import fitz
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz
 
 def create_sample_pdf(output_path: str):
     doc = fitz.open()

@@ -1,10 +1,24 @@
 import io
-import fitz
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
+from fastapi import HTTPException, UploadFile
+from pydantic import ValidationError
 
-client = TestClient(app)
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz
+
+from app.api.routes import (
+    health_check,
+    extract_document,
+    upload_document,
+    get_document_summary,
+    ask_document_question,
+    delete_document,
+    document_store,
+)
+from app.schemas.document import AskRequest
+
 
 def create_sample_pdf() -> bytes:
     doc = fitz.open()
@@ -16,53 +30,78 @@ def create_sample_pdf() -> bytes:
     doc.close()
     return pdf_bytes
 
-def test_health_endpoint():
-    response = client.get("/api/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "healthy"
-    assert "version" in data
 
-def test_extract_endpoint():
+def test_health_endpoint():
+    res = health_check()
+    assert res.status == "healthy"
+    assert res.version == "0.1.0"
+
+
+def test_extract_endpoint_valid():
     pdf_bytes = create_sample_pdf()
-    response = client.post(
-        "/api/documents/extract",
-        files={"file": ("sample.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+    file = UploadFile(
+        file=io.BytesIO(pdf_bytes),
+        filename="sample.pdf",
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["filename"] == "sample.pdf"
-    assert data["page_count"] == 2
-    assert len(data["pages"]) == 2
-    assert data["pages"][0]["page_number"] == 1
+    res = extract_document(file=file)
+    assert res.filename == "sample.pdf"
+    assert res.page_count == 2
+    assert len(res.pages) == 2
+    assert res.pages[0].page_number == 1
+    assert "Antigravity" in res.pages[0].text
+
 
 def test_extract_invalid_extension():
-    response = client.post(
-        "/api/documents/extract",
-        files={"file": ("sample.txt", io.BytesIO(b"hello world"), "text/plain")},
+    file = UploadFile(
+        file=io.BytesIO(b"hello world"),
+        filename="sample.txt",
     )
-    assert response.status_code == 400
-    assert "Only PDF files are supported" in response.json()["detail"]
+    with pytest.raises(HTTPException) as exc:
+        extract_document(file=file)
+    assert exc.value.status_code == 400
+    assert "Only PDF files are supported" in exc.value.detail
+
 
 def test_upload_and_delete_document():
     pdf_bytes = create_sample_pdf()
-    response = client.post(
-        "/api/documents",
-        files={"file": ("test_doc.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+    file = UploadFile(
+        file=io.BytesIO(pdf_bytes),
+        filename="test_doc.pdf",
     )
-    assert response.status_code == 200
-    data = response.json()
-    doc_id = data["document_id"]
-    assert data["page_count"] == 2
-    assert data["chunk_count"] > 0
-    assert data["status"] == "ready"
+    res = upload_document(file=file)
+    assert res.filename == "test_doc.pdf"
+    assert res.page_count == 2
+    assert res.chunk_count > 0
+    assert res.status == "ready"
+    doc_id = res.document_id
 
-    # Test delete
-    del_res = client.delete(f"/api/documents/{doc_id}")
-    assert del_res.status_code == 200
-    assert del_res.json()["status"] == "deleted"
+    # Verify present in store
+    assert document_store.get(doc_id) is not None
 
-    # Test 404 after delete
-    get_res = client.post(f"/api/documents/{doc_id}/summary")
-    assert get_res.status_code == 404
+    # Delete
+    del_res = delete_document(doc_id)
+    assert del_res.status == "deleted"
+    assert del_res.document_id == doc_id
 
+    # Verify 404 after deletion
+    with pytest.raises(HTTPException) as exc:
+        get_document_summary(doc_id)
+    assert exc.value.status_code == 404
+
+
+def test_ask_request_validation():
+    # Valid question
+    req = AskRequest(question="What is SolarPulse?")
+    assert req.question == "What is SolarPulse?"
+
+    # Trimming whitespace
+    req_trimmed = AskRequest(question="   What is this?   ")
+    assert req_trimmed.question == "What is this?"
+
+    # Whitespace only should fail
+    with pytest.raises(ValidationError):
+        AskRequest(question="     ")
+
+    # Too short
+    with pytest.raises(ValidationError):
+        AskRequest(question="a")

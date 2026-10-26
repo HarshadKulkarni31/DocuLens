@@ -668,13 +668,90 @@ body {
 }
 
 .source-list-header {
-  padding: 0.5rem 0.75rem;
+  width: 100%;
+  border: none;
+  font: inherit;
+  padding: 0.6rem 0.85rem;
   background-color: #f8fafc;
   display: flex;
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
   user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.source-list-header:hover {
+  background-color: #f1f5f9;
+}
+
+.expand-indicator {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* Formatted Text & Markdown Typography */
+.formatted-text-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.formatted-p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.formatted-h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+  color: var(--text-main);
+}
+
+.formatted-h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 0.4rem;
+  margin-bottom: 0.2rem;
+  color: var(--text-main);
+}
+
+.formatted-h4 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 0.3rem;
+  margin-bottom: 0.15rem;
+  color: #334155;
+}
+
+.formatted-list {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.25rem 0;
+}
+
+.formatted-list li {
+  line-height: 1.5;
+}
+
+.inline-code {
+  background-color: #f1f5f9;
+  color: #be185d;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+.user-msg .inline-code {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: white;
 }
 
 .source-list-title {

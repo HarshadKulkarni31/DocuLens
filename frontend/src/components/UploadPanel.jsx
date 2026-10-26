@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function UploadPanel({
@@ -37,6 +37,16 @@ export default function UploadPanel({
     if (files && files.length > 0) {
       processFile(files[0]);
     }
+    // Reset file input value so selecting the same file works again
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const triggerFileInput = () => {
+    if (fileInputRef.current && !isUploading) {
+      fileInputRef.current.click();
+    }
   };
 
   const processFile = async (file) => {
@@ -72,9 +82,6 @@ export default function UploadPanel({
       onError(err.message || 'Failed to upload and index document.');
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
     }
   };
 
@@ -91,6 +98,16 @@ export default function UploadPanel({
 
   return (
     <div className="upload-section">
+      {/* Hidden single file input for both fresh upload and document replacement */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept=".pdf,application/pdf"
+        style={{ display: 'none' }}
+        aria-hidden="true"
+      />
+
       {!activeDoc ? (
         <div
           className={`dropzone ${isDragging ? 'dropzone-active' : ''} ${
@@ -99,16 +116,17 @@ export default function UploadPanel({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onClick={() => !isUploading && fileInputRef.current?.click()}
+          onClick={triggerFileInput}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              triggerFileInput();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="Upload PDF Document"
         >
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".pdf,application/pdf"
-            style={{ display: 'none' }}
-          />
-
           {isUploading ? (
             <div className="upload-loading">
               <div className="spinner"></div>
@@ -153,23 +171,20 @@ export default function UploadPanel({
 
           <div className="doc-actions">
             <button
+              type="button"
               className="action-btn secondary"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={triggerFileInput}
+              disabled={isUploading}
               title="Replace current document"
             >
-              <RefreshCw size={15} />
+              <RefreshCw size={15} className={isUploading ? 'spin' : ''} />
               <span>Replace</span>
             </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept=".pdf,application/pdf"
-              style={{ display: 'none' }}
-            />
             <button
+              type="button"
               className="action-btn danger"
               onClick={handleRemove}
+              disabled={isUploading}
               title="Remove document"
             >
               <Trash2 size={15} />

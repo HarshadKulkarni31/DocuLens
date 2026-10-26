@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, MessageSquare, Bot, User, Trash2, HelpCircle, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 import SourceList from './SourceList';
+import FormattedText from './FormattedText';
 
 const SAMPLE_PROMPTS = [
   "What is the main purpose or objective of this document?",
@@ -11,69 +12,89 @@ const SAMPLE_PROMPTS = [
 ];
 
 export default function ChatPanel({ activeDoc, onError }) {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    if (!activeDoc) return [];
+    return [
+      {
+        id: `welcome-${activeDoc.document_id}`,
+        sender: 'assistant',
+        text: `Document **${activeDoc.filename}** loaded with ${activeDoc.page_count} pages and indexed into ${activeDoc.chunk_count} vector chunks. Ask me any question grounded in its content!`,
+        sources: [],
+      },
+    ];
+  });
   const [inputQuery, setInputQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Auto scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Reset chat when document changes
+  // Clean up in-flight requests on unmount
   useEffect(() => {
-    if (activeDoc) {
-      setMessages([
-        {
-          id: 'welcome',
-          sender: 'assistant',
-          text: `Document **${activeDoc.filename}** loaded with ${activeDoc.page_count} pages and indexed into ${activeDoc.chunk_count} vector chunks. Ask me any question grounded in its content!`,
-          sources: [],
-        },
-      ]);
-    } else {
-      setMessages([]);
-    }
-  }, [activeDoc?.document_id]);
-
-  const handleSend = async (queryText) => {
-    const query = (queryText || inputQuery).trim();
-    if (!query || isLoading || !activeDoc?.document_id) return;
-
-    const userMessage = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      text: query,
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
+  }, []);
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInputQuery('');
-    setIsLoading(true);
+  const handleSend = useCallback(
+    async (queryText) => {
+      const query = (queryText !== undefined ? queryText : inputQuery).trim();
+      if (!query || isLoading || !activeDoc?.document_id) return;
 
-    try {
-      const response = await api.askQuestion(activeDoc.document_id, query);
-      const assistantMessage = {
-        id: `assistant-${Date.now()}`,
-        sender: 'assistant',
-        text: response.answer,
-        sources: response.sources || [],
+      if (query.length < 2) {
+        if (onError) onError('Please enter a question with at least 2 characters.');
+        return;
+      }
+
+      const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+      const userMessage = {
+        id: `user-${msgId}`,
+        sender: 'user',
+        text: query,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (err) {
-      const errorMessage = {
-        id: `err-${Date.now()}`,
-        sender: 'assistant',
-        isError: true,
-        text: `Error: ${err.message || 'Unable to retrieve answer from document.'}`,
-        sources: [],
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-      if (onError) onError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+
+      setMessages((prev) => [...prev, userMessage]);
+      setInputQuery('');
+      setIsLoading(true);
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+        const response = await api.askQuestion(activeDoc.document_id, query, controller.signal);
+        const replyId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+        const assistantMessage = {
+          id: `assistant-${replyId}`,
+          sender: 'assistant',
+          text: response.answer,
+          sources: response.sources || [],
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+
+        const errId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
+        const errorMessage = {
+          id: `err-${errId}`,
+          sender: 'assistant',
+          isError: true,
+          text: `Error: ${err.message || 'Unable to retrieve answer from document.'}`,
+          sources: [],
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+        if (onError) onError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [activeDoc, inputQuery, isLoading, onError]
+  );
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -104,7 +125,7 @@ export default function ChatPanel({ activeDoc, onError }) {
           <span className="rag-badge">Grounded RAG</span>
         </div>
         {messages.length > 1 && (
-          <button className="icon-btn" onClick={clearHistory} title="Clear conversation">
+          <button type="button" className="icon-btn" onClick={clearHistory} title="Clear conversation">
             <Trash2 size={16} />
             <span>Clear</span>
           </button>
@@ -123,7 +144,7 @@ export default function ChatPanel({ activeDoc, onError }) {
               {msg.sender === 'user' ? <User size={16} /> : <Bot size={16} />}
             </div>
             <div className="msg-body">
-              <div className="msg-text">{msg.text}</div>
+              <FormattedText text={msg.text} className="msg-text" />
               {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} />}
             </div>
           </div>
@@ -155,6 +176,7 @@ export default function ChatPanel({ activeDoc, onError }) {
           <div className="prompt-chips">
             {SAMPLE_PROMPTS.map((prompt, idx) => (
               <button
+                type="button"
                 key={idx}
                 className="prompt-chip"
                 onClick={() => handleSend(prompt)}
@@ -175,12 +197,15 @@ export default function ChatPanel({ activeDoc, onError }) {
           placeholder="Ask a question about this document (Enter to send)..."
           disabled={isLoading}
           maxLength={500}
+          aria-label="Ask a question about the document"
         />
         <button
+          type="button"
           className="send-button"
           onClick={() => handleSend()}
           disabled={!inputQuery.trim() || isLoading}
           title="Send question"
+          aria-label="Send question"
         >
           {isLoading ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
         </button>

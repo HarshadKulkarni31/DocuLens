@@ -1,6 +1,8 @@
 import uuid
 import logging
-from typing import Dict, Any
+import threading
+from collections import OrderedDict
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from ..schemas.document import (
     HealthResponse,
@@ -22,10 +24,42 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Document Intelligence"])
 
-# In-memory document storage for the session
-document_registry: Dict[str, Dict[str, Any]] = {}
 
-# Reusable services
+class DocumentStore:
+    """Thread-safe in-memory LRU document storage for session management."""
+
+    def __init__(self, max_capacity: int = 50):
+        self._lock = threading.Lock()
+        self._store: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self.max_capacity = max_capacity
+
+    def get(self, document_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            if document_id in self._store:
+                self._store.move_to_end(document_id)
+                return self._store[document_id]
+            return None
+
+    def set(self, document_id: str, data: Dict[str, Any]):
+        with self._lock:
+            if document_id in self._store:
+                self._store.move_to_end(document_id)
+            self._store[document_id] = data
+            while len(self._store) > self.max_capacity:
+                evicted_id, _ = self._store.popitem(last=False)
+                logger.info(f"Evicted old document '{evicted_id}' from memory store.")
+
+    def delete(self, document_id: str) -> bool:
+        with self._lock:
+            return bool(self._store.pop(document_id, None))
+
+    def clear(self):
+        with self._lock:
+            self._store.clear()
+
+
+# Shared instances
+document_store = DocumentStore()
 pdf_service = PDFService()
 chunking_service = ChunkingService()
 gemini_service = GeminiService()
@@ -38,12 +72,12 @@ def health_check():
 
 
 @router.post("/documents/extract", response_model=DocumentExtractResponse)
-async def extract_document(file: UploadFile = File(...)):
+def extract_document(file: UploadFile = File(...)):
     """
     Validates and extracts raw text page by page from an uploaded PDF.
     Does not index or store the document.
     """
-    pdf_bytes = await pdf_service.validate_and_read(file)
+    pdf_bytes = pdf_service.validate_and_read(file)
     pages, total_chars = pdf_service.extract_text_by_pages(pdf_bytes)
 
     page_extracts = [
@@ -59,7 +93,7 @@ async def extract_document(file: UploadFile = File(...)):
 
 
 @router.post("/documents", response_model=DocumentUploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+def upload_document(file: UploadFile = File(...)):
     """
     Full document ingestion pipeline:
     1. Validates and extracts page-numbered text from PDF.
@@ -67,7 +101,7 @@ async def upload_document(file: UploadFile = File(...)):
     3. Generates embeddings and builds in-memory vector index (FAISS).
     4. Registers document for subsequent Q&A and summary queries.
     """
-    pdf_bytes = await pdf_service.validate_and_read(file)
+    pdf_bytes = pdf_service.validate_and_read(file)
     pages, total_chars = pdf_service.extract_text_by_pages(pdf_bytes)
 
     doc_id = str(uuid.uuid4())
@@ -91,16 +125,19 @@ async def upload_document(file: UploadFile = File(...)):
             detail=f"Failed to build vector index: {str(e)}",
         )
 
-    # Store in memory registry
-    document_registry[doc_id] = {
-        "filename": file.filename or "uploaded.pdf",
-        "page_count": len(pages),
-        "pages": pages,
-        "chunks": chunks,
-        "index": index,
-        "summary": None,
-        "key_points": None,
-    }
+    # Store in thread-safe memory registry
+    document_store.set(
+        doc_id,
+        {
+            "filename": file.filename or "uploaded.pdf",
+            "page_count": len(pages),
+            "pages": pages,
+            "chunks": chunks,
+            "index": index,
+            "summary": None,
+            "key_points": None,
+        },
+    )
 
     return DocumentUploadResponse(
         document_id=doc_id,
@@ -116,7 +153,7 @@ def get_document_summary(document_id: str):
     """
     Generates or retrieves a cached executive summary and key points for a document.
     """
-    doc = document_registry.get(document_id)
+    doc = document_store.get(document_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -152,7 +189,7 @@ def ask_document_question(document_id: str, request: AskRequest):
     2. Sends context and question to Gemini with strict grounding instructions.
     3. Maps citations back to true chunk metadata with page numbers and excerpts.
     """
-    doc = document_registry.get(document_id)
+    doc = document_store.get(document_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -173,8 +210,7 @@ def ask_document_question(document_id: str, request: AskRequest):
 @router.delete("/documents/{document_id}", response_model=DeleteResponse)
 def delete_document(document_id: str):
     """Removes a document and its index from memory."""
-    if document_id in document_registry:
-        del document_registry[document_id]
+    if document_store.delete(document_id):
         return DeleteResponse(
             status="deleted",
             document_id=document_id,

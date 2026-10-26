@@ -10,11 +10,11 @@ export default function SourceList({ sources }) {
 
   return (
     <div className="source-list-container">
-      <div
+      <button
+        type="button"
         className="source-list-header"
-        onClick={() => setExpanded(!expanded)}
-        role="button"
-        tabIndex={0}
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
       >
         <div className="source-list-title">
           <BookOpen size={16} className="source-icon" />
@@ -22,10 +22,10 @@ export default function SourceList({ sources }) {
             {sources.length} Referenced Source{sources.length > 1 ? 's' : ''} (Verified from document)
           </span>
         </div>
-        <button className="expand-btn" aria-label="Toggle sources">
+        <div className="expand-indicator">
           {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
-      </div>
+        </div>
+      </button>
 
       {expanded && (
         <div className="source-cards">

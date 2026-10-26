@@ -124,6 +124,7 @@ export default function Home() {
             <div className="panels-grid">
               <div className={`panel-col ${activeTab !== 'summary' ? 'hidden-on-mobile' : ''}`}>
                 <SummaryPanel
+                  key={activeDoc.document_id}
                   activeDoc={activeDoc}
                   onError={(msg) => setErrorMessage(msg)}
                 />
@@ -131,6 +132,7 @@ export default function Home() {
 
               <div className={`panel-col ${activeTab !== 'chat' ? 'hidden-on-mobile' : ''}`}>
                 <ChatPanel
+                  key={activeDoc.document_id}
                   activeDoc={activeDoc}
                   onError={(msg) => setErrorMessage(msg)}
                 />

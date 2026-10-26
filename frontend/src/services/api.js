@@ -21,13 +21,29 @@ async function handleResponse(response) {
   return response.json();
 }
 
+/**
+ * Wraps fetch to provide human-friendly error messages on network failure
+ */
+async function safeFetch(url, options = {}) {
+  try {
+    return await fetch(url, options);
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw err;
+    }
+    throw new Error(
+      'Unable to connect to the DocuLens server. Please ensure the backend is running at http://127.0.0.1:8000.'
+    );
+  }
+}
+
 export const api = {
   /**
    * Health check
    */
   async checkHealth() {
     try {
-      const res = await fetch(`${API_BASE}/health`);
+      const res = await safeFetch(`${API_BASE}/health`);
       return await handleResponse(res);
     } catch (err) {
       return { status: 'unreachable', error: err.message };
@@ -37,13 +53,14 @@ export const api = {
   /**
    * Upload and index PDF
    */
-  async uploadDocument(file) {
+  async uploadDocument(file, signal) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const res = await fetch(`${API_BASE}/documents`, {
+    const res = await safeFetch(`${API_BASE}/documents`, {
       method: 'POST',
       body: formData,
+      signal,
     });
     return await handleResponse(res);
   },
@@ -51,13 +68,14 @@ export const api = {
   /**
    * Extract text only
    */
-  async extractDocument(file) {
+  async extractDocument(file, signal) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const res = await fetch(`${API_BASE}/documents/extract`, {
+    const res = await safeFetch(`${API_BASE}/documents/extract`, {
       method: 'POST',
       body: formData,
+      signal,
     });
     return await handleResponse(res);
   },
@@ -65,9 +83,10 @@ export const api = {
   /**
    * Get document summary
    */
-  async getSummary(documentId) {
-    const res = await fetch(`${API_BASE}/documents/${documentId}/summary`, {
+  async getSummary(documentId, signal) {
+    const res = await safeFetch(`${API_BASE}/documents/${documentId}/summary`, {
       method: 'POST',
+      signal,
     });
     return await handleResponse(res);
   },
@@ -75,13 +94,14 @@ export const api = {
   /**
    * Ask question grounded in document context
    */
-  async askQuestion(documentId, question) {
-    const res = await fetch(`${API_BASE}/documents/${documentId}/ask`, {
+  async askQuestion(documentId, question, signal) {
+    const res = await safeFetch(`${API_BASE}/documents/${documentId}/ask`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ question }),
+      signal,
     });
     return await handleResponse(res);
   },
@@ -90,7 +110,7 @@ export const api = {
    * Delete document from memory
    */
   async deleteDocument(documentId) {
-    const res = await fetch(`${API_BASE}/documents/${documentId}`, {
+    const res = await safeFetch(`${API_BASE}/documents/${documentId}`, {
       method: 'DELETE',
     });
     return await handleResponse(res);

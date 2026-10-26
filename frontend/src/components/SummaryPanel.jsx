@@ -1,37 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, RefreshCw, Copy, Check, AlertCircle } from 'lucide-react';
 import { api } from '../services/api';
+import FormattedText from './FormattedText';
 
 export default function SummaryPanel({ activeDoc, onError }) {
   const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
-
-  const fetchSummary = async () => {
-    if (!activeDoc?.document_id) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.getSummary(activeDoc.document_id);
-      setSummaryData(data);
-    } catch (err) {
-      setError(err.message || 'Failed to generate summary.');
-      if (onError) onError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshCount, setRefreshCount] = useState(0);
 
   useEffect(() => {
-    if (activeDoc?.document_id) {
-      setSummaryData(null);
+    let ignore = false;
+    const controller = new AbortController();
+
+    async function loadSummary() {
+      if (!activeDoc?.document_id) return;
+      setLoading(true);
       setError(null);
-      fetchSummary();
-    } else {
-      setSummaryData(null);
+
+      try {
+        const data = await api.getSummary(activeDoc.document_id, controller.signal);
+        if (!ignore) {
+          setSummaryData(data);
+        }
+      } catch (err) {
+        if (!ignore && err.name !== 'AbortError') {
+          setError(err.message || 'Failed to generate summary.');
+          if (onError) onError(err.message);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
     }
-  }, [activeDoc?.document_id]);
+
+    loadSummary();
+
+    return () => {
+      ignore = true;
+      controller.abort();
+    };
+  }, [activeDoc?.document_id, refreshCount, onError]);
 
   const handleCopy = () => {
     if (!summaryData) return;
@@ -41,6 +52,10 @@ export default function SummaryPanel({ activeDoc, onError }) {
     navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRegenerate = () => {
+    setRefreshCount((c) => c + 1);
   };
 
   if (!activeDoc) {
@@ -61,14 +76,15 @@ export default function SummaryPanel({ activeDoc, onError }) {
         </div>
         <div className="header-actions">
           {summaryData && (
-            <button className="icon-btn" onClick={handleCopy} title="Copy summary">
+            <button type="button" className="icon-btn" onClick={handleCopy} title="Copy summary">
               {copied ? <Check size={16} className="text-green" /> : <Copy size={16} />}
               <span>{copied ? 'Copied' : 'Copy'}</span>
             </button>
           )}
           <button
+            type="button"
             className="icon-btn"
-            onClick={fetchSummary}
+            onClick={handleRegenerate}
             disabled={loading}
             title="Regenerate summary"
           >
@@ -92,7 +108,7 @@ export default function SummaryPanel({ activeDoc, onError }) {
           <AlertCircle size={20} />
           <div>
             <p className="error-text">{error}</p>
-            <button className="retry-link" onClick={fetchSummary}>
+            <button type="button" className="retry-link" onClick={handleRegenerate}>
               Click to retry
             </button>
           </div>
@@ -102,9 +118,7 @@ export default function SummaryPanel({ activeDoc, onError }) {
       {summaryData && !loading && (
         <div className="summary-content">
           <div className="summary-text">
-            {summaryData.summary.split('\n\n').map((paragraph, idx) => (
-              <p key={idx}>{paragraph}</p>
-            ))}
+            <FormattedText text={summaryData.summary} />
           </div>
 
           {summaryData.key_points && summaryData.key_points.length > 0 && (
@@ -114,7 +128,7 @@ export default function SummaryPanel({ activeDoc, onError }) {
                 {summaryData.key_points.map((point, idx) => (
                   <li key={idx}>
                     <span className="bullet-point"></span>
-                    <span>{point}</span>
+                    <FormattedText text={point} />
                   </li>
                 ))}
               </ul>
