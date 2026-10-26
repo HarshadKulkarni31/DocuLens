@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, MessageSquare, Bot, User, Trash2, HelpCircle, Loader2 } from 'lucide-react';
+import { Send, MessageSquare, Bot, User, Trash2, HelpCircle, Loader2, Download } from 'lucide-react';
 import { api } from '../services/api';
 import SourceList from './SourceList';
 import FormattedText from './FormattedText';
@@ -59,7 +59,25 @@ export default function ChatPanel({ activeDoc, onError }) {
         text: query,
       };
 
-      setMessages((prev) => [...prev, userMessage]);
+      // Assistant placeholder for streaming
+      const assistantId = `assistant-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random())}`;
+      const assistantPlaceholder = {
+        id: assistantId,
+        sender: 'assistant',
+        text: '',
+        sources: [],
+        isStreaming: true,
+      };
+
+      // Prepare multi-turn history from preceding messages
+      const historyPayload = messages
+        .filter((m) => !m.isError && !m.id.startsWith('welcome-'))
+        .map((m) => ({
+          role: m.sender === 'user' ? 'user' : 'assistant',
+          content: m.text,
+        }));
+
+      setMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
       setInputQuery('');
       setIsLoading(true);
 
@@ -67,33 +85,84 @@ export default function ChatPanel({ activeDoc, onError }) {
       abortControllerRef.current = controller;
 
       try {
-        const response = await api.askQuestion(activeDoc.document_id, query, controller.signal);
-        const replyId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
-        const assistantMessage = {
-          id: `assistant-${replyId}`,
-          sender: 'assistant',
-          text: response.answer,
-          sources: response.sources || [],
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        // Attempt real-time SSE streaming
+        await api.askQuestionStream(
+          activeDoc.document_id,
+          query,
+          historyPayload,
+          {
+            onSources: (sources) => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantId ? { ...msg, sources: sources || [] } : msg
+                )
+              );
+            },
+            onToken: (token) => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantId ? { ...msg, text: msg.text + token } : msg
+                )
+              );
+            },
+            onDone: () => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantId ? { ...msg, isStreaming: false } : msg
+                )
+              );
+            },
+            onError: (err) => {
+              throw err;
+            },
+            signal: controller.signal,
+          }
+        );
       } catch (err) {
         if (err.name === 'AbortError') return;
 
-        const errId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
-        const errorMessage = {
-          id: `err-${errId}`,
-          sender: 'assistant',
-          isError: true,
-          text: `Error: ${err.message || 'Unable to retrieve answer from document.'}`,
-          sources: [],
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-        if (onError) onError(err.message);
+        // Fallback to standard non-streaming request if stream is unavailable
+        try {
+          const fallbackRes = await api.askQuestion(
+            activeDoc.document_id,
+            query,
+            historyPayload,
+            controller.signal
+          );
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    text: fallbackRes.answer,
+                    sources: fallbackRes.sources || [],
+                    isStreaming: false,
+                  }
+                : msg
+            )
+          );
+        } catch (fallbackErr) {
+          if (fallbackErr.name === 'AbortError') return;
+          const errDetail = fallbackErr.message || err.message || 'Unable to retrieve answer from document.';
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    isError: true,
+                    text: `Error: ${errDetail}`,
+                    isStreaming: false,
+                  }
+                : msg
+            )
+          );
+          if (onError) onError(errDetail);
+        }
       } finally {
         setIsLoading(false);
       }
     },
-    [activeDoc, inputQuery, isLoading, onError]
+    [activeDoc, inputQuery, isLoading, messages, onError]
   );
 
   const handleKeyDown = (e) => {
@@ -105,6 +174,39 @@ export default function ChatPanel({ activeDoc, onError }) {
 
   const clearHistory = () => {
     setMessages([]);
+  };
+
+  const handleExportChat = () => {
+    if (messages.length <= 1) return;
+    const dateStr = new Date().toLocaleDateString();
+    let md = `# DocuLens Q&A Transcript\n\n`;
+    md += `**Document:** ${activeDoc?.filename || 'Document'}\n`;
+    md += `**Date:** ${dateStr}\n\n---\n\n`;
+
+    messages.forEach((m) => {
+      if (m.id.startsWith('welcome-') || m.isError) return;
+      if (m.sender === 'user') {
+        md += `### 👤 Question\n${m.text}\n\n`;
+      } else {
+        md += `### 🤖 Grounded Answer\n${m.text}\n\n`;
+        if (m.sources && m.sources.length > 0) {
+          md += `*Sources:*\n`;
+          m.sources.forEach((s) => {
+            md += `- **Page ${s.page_number}**: "${s.excerpt}"\n`;
+          });
+          md += `\n`;
+        }
+        md += `---\n\n`;
+      }
+    });
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `doculens-chat-${activeDoc?.filename ? activeDoc.filename.replace(/\.pdf$/i, '') : 'export'}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   if (!activeDoc) {
@@ -122,14 +224,27 @@ export default function ChatPanel({ activeDoc, onError }) {
         <div className="header-title">
           <MessageSquare size={18} className="chat-icon" />
           <h3>Ask DocuLens</h3>
-          <span className="rag-badge">Grounded RAG</span>
+          <span className="rag-badge">Streaming RAG</span>
         </div>
-        {messages.length > 1 && (
-          <button type="button" className="icon-btn" onClick={clearHistory} title="Clear conversation">
-            <Trash2 size={16} />
-            <span>Clear</span>
-          </button>
-        )}
+        <div className="header-actions">
+          {messages.length > 1 && (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={handleExportChat}
+              title="Export chat as Markdown"
+            >
+              <Download size={15} />
+              <span>Export</span>
+            </button>
+          )}
+          {messages.length > 1 && (
+            <button type="button" className="icon-btn" onClick={clearHistory} title="Clear conversation">
+              <Trash2 size={15} />
+              <span>Clear</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="chat-messages">
@@ -144,13 +259,19 @@ export default function ChatPanel({ activeDoc, onError }) {
               {msg.sender === 'user' ? <User size={16} /> : <Bot size={16} />}
             </div>
             <div className="msg-body">
-              <FormattedText text={msg.text} className="msg-text" />
+              {msg.text ? (
+                <FormattedText text={msg.text} className="msg-text" />
+              ) : (
+                <div className="streaming-cursor-wrap">
+                  <span className="streaming-cursor"></span>
+                </div>
+              )}
               {msg.sources && msg.sources.length > 0 && <SourceList sources={msg.sources} />}
             </div>
           </div>
         ))}
 
-        {isLoading && (
+        {isLoading && !messages[messages.length - 1]?.isStreaming && (
           <div className="message-bubble assistant-msg loading-bubble">
             <div className="msg-avatar">
               <Bot size={16} />
@@ -158,7 +279,7 @@ export default function ChatPanel({ activeDoc, onError }) {
             <div className="msg-body">
               <div className="typing-indicator">
                 <Loader2 size={18} className="spin" />
-                <span>Searching vector index & grounding answer with Gemini...</span>
+                <span>Searching vector index & retrieving passages...</span>
               </div>
             </div>
           </div>
@@ -194,7 +315,7 @@ export default function ChatPanel({ activeDoc, onError }) {
           value={inputQuery}
           onChange={(e) => setInputQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask a question about this document (Enter to send)..."
+          placeholder="Ask a question or follow-up (Enter to send)..."
           disabled={isLoading}
           maxLength={500}
           aria-label="Ask a question about the document"

@@ -51,6 +51,14 @@ export const api = {
   },
 
   /**
+   * List all persisted documents from SQLite
+   */
+  async getDocuments(signal) {
+    const res = await safeFetch(`${API_BASE}/documents`, { signal });
+    return await handleResponse(res);
+  },
+
+  /**
    * Upload and index PDF
    */
   async uploadDocument(file, signal) {
@@ -92,22 +100,98 @@ export const api = {
   },
 
   /**
-   * Ask question grounded in document context
+   * Ask question grounded in document context (non-streaming)
    */
-  async askQuestion(documentId, question, signal) {
+  async askQuestion(documentId, question, history = [], signal) {
     const res = await safeFetch(`${API_BASE}/documents/${documentId}/ask`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, history }),
       signal,
     });
     return await handleResponse(res);
   },
 
   /**
-   * Delete document from memory
+   * Ask question with real-time SSE streaming
+   */
+  async askQuestionStream(documentId, question, history = [], { onSources, onToken, onDone, onError, signal }) {
+    const response = await safeFetch(`${API_BASE}/documents/${documentId}/ask/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ question, history }),
+      signal,
+    });
+
+    if (!response.ok) {
+      let errorDetail = `Error ${response.status}: ${response.statusText}`;
+      try {
+        const data = await response.json();
+        if (data && data.detail) errorDetail = data.detail;
+      } catch {}
+      throw new Error(errorDetail);
+    }
+
+    if (!response.body) {
+      throw new Error('ReadableStream not supported by this browser.');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          const lines = part.split('\n');
+          let eventType = 'message';
+          let dataText = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataText += line.slice(5).trim();
+            }
+          }
+
+          if (dataText) {
+            try {
+              const parsed = JSON.parse(dataText);
+              if (eventType === 'sources' && onSources) {
+                onSources(parsed);
+              } else if (eventType === 'token' && onToken) {
+                onToken(parsed);
+              } else if (eventType === 'error') {
+                if (onError) onError(new Error(parsed.error || 'Streaming error'));
+              } else if (eventType === 'done' && onDone) {
+                onDone();
+              }
+            } catch (err) {
+              console.warn('Failed to parse SSE JSON:', err, dataText);
+            }
+          }
+        }
+      }
+    } finally {
+      if (onDone) onDone();
+    }
+  },
+
+  /**
+   * Delete document from persistent storage
    */
   async deleteDocument(documentId) {
     const res = await safeFetch(`${API_BASE}/documents/${documentId}`, {

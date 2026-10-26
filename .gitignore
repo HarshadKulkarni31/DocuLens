@@ -53,3 +53,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local databases & persistent storage
+*.db
+*.sqlite
+*.sqlite3
+backend/data/

@@ -33,6 +33,7 @@ class DocumentIndex:
         document_id: str,
         chunks: List[Chunk],
         embedding_service: Optional[EmbeddingService] = None,
+        precomputed_embeddings: Optional[np.ndarray] = None,
     ):
         self.document_id = document_id
         self.chunks = chunks  # Vector index position maps 1:1 to chunk index
@@ -40,7 +41,7 @@ class DocumentIndex:
         self.dimension = self.embedding_service.get_dimension()
         self.use_faiss = HAS_FAISS
         self.index = None
-        self.embeddings_matrix = None
+        self.embeddings_matrix = precomputed_embeddings
 
         self._build_index()
 
@@ -48,12 +49,14 @@ class DocumentIndex:
         if not self.chunks:
             return
 
-        texts = [chunk.text for chunk in self.chunks]
-        embeddings = self.embedding_service.encode(texts)
-        if embeddings.shape[0] == 0:
-            return
-
-        self.embeddings_matrix = embeddings
+        if self.embeddings_matrix is None:
+            texts = [chunk.text for chunk in self.chunks]
+            embeddings = self.embedding_service.encode(texts)
+            if embeddings.shape[0] == 0:
+                return
+            self.embeddings_matrix = embeddings
+        else:
+            embeddings = self.embeddings_matrix
 
         if self.use_faiss:
             try:

@@ -24,7 +24,18 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     page_count: int
     chunk_count: int
+    file_size: Optional[int] = 0
     status: str = "ready"
+
+
+class DocumentListItem(BaseModel):
+    document_id: str
+    filename: str
+    file_size: int
+    page_count: int
+    chunk_count: int
+    created_at: Optional[str] = None
+    has_summary: bool = False
 
 
 class SummaryResponse(BaseModel):
@@ -33,12 +44,21 @@ class SummaryResponse(BaseModel):
     key_points: List[str] = Field(default_factory=list)
 
 
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., max_length=2000, description="Message content")
+
+
 class AskRequest(BaseModel):
     question: str = Field(
         ...,
         min_length=2,
         max_length=500,
         description="Question about the document",
+    )
+    history: Optional[List[ChatMessage]] = Field(
+        default_factory=list,
+        description="Optional preceding conversation turns for contextual follow-up questions",
     )
 
     @field_validator("question")

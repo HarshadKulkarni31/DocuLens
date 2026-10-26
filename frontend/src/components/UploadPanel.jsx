@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadCloud, FileText, CheckCircle2, RefreshCw, Trash2, BookOpen } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function UploadPanel({
@@ -11,7 +11,27 @@ export default function UploadPanel({
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [savedDocs, setSavedDocs] = useState([]);
   const fileInputRef = useRef(null);
+
+  // Load saved documents from SQLite database
+  useEffect(() => {
+    let ignore = false;
+    async function fetchSaved() {
+      try {
+        const docs = await api.getDocuments();
+        if (!ignore && Array.isArray(docs)) {
+          setSavedDocs(docs);
+        }
+      } catch (err) {
+        console.warn('Failed to load saved docs:', err);
+      }
+    }
+    fetchSaved();
+    return () => {
+      ignore = true;
+    };
+  }, [activeDoc]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -71,13 +91,14 @@ export default function UploadPanel({
     try {
       setIsUploading(true);
       const result = await api.uploadDocument(file);
-      setActiveDoc({
+      const newDoc = {
         document_id: result.document_id,
         filename: result.filename,
         page_count: result.page_count,
         chunk_count: result.chunk_count,
         size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
-      });
+      };
+      setActiveDoc(newDoc);
     } catch (err) {
       onError(err.message || 'Failed to upload and index document.');
     } finally {
@@ -85,10 +106,35 @@ export default function UploadPanel({
     }
   };
 
+  const handleSelectSaved = (doc) => {
+    clearError();
+    setActiveDoc({
+      document_id: doc.document_id,
+      filename: doc.filename,
+      page_count: doc.page_count,
+      chunk_count: doc.chunk_count,
+      size: doc.file_size ? (doc.file_size / (1024 * 1024)).toFixed(2) + ' MB' : 'Saved',
+    });
+  };
+
+  const handleDeleteSaved = async (e, docId) => {
+    e.stopPropagation();
+    try {
+      await api.deleteDocument(docId);
+      setSavedDocs((prev) => prev.filter((d) => d.document_id !== docId));
+      if (activeDoc?.document_id === docId) {
+        onReset();
+      }
+    } catch (err) {
+      onError(err.message || 'Failed to delete saved document.');
+    }
+  };
+
   const handleRemove = async () => {
     if (activeDoc?.document_id) {
       try {
         await api.deleteDocument(activeDoc.document_id);
+        setSavedDocs((prev) => prev.filter((d) => d.document_id !== activeDoc.document_id));
       } catch (err) {
         console.warn('Failed to delete on backend:', err);
       }
@@ -131,7 +177,7 @@ export default function UploadPanel({
             <div className="upload-loading">
               <div className="spinner"></div>
               <h4>Analyzing and indexing document...</h4>
-              <p>Extracting text pages, generating embeddings & building FAISS index</p>
+              <p>Extracting text pages, generating embeddings & persisting to SQLite</p>
             </div>
           ) : (
             <div className="dropzone-content">
@@ -163,7 +209,7 @@ export default function UploadPanel({
                 <span className="meta-badge">{activeDoc.chunk_count} Chunks</span>
                 <span className="meta-badge">{activeDoc.size}</span>
                 <span className="status-badge ready">
-                  <CheckCircle2 size={13} /> Indexed & Ready
+                  <CheckCircle2 size={13} /> Saved in Database
                 </span>
               </div>
             </div>
@@ -190,6 +236,38 @@ export default function UploadPanel({
               <Trash2 size={15} />
               <span>Remove</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent Document Library */}
+      {savedDocs.length > 0 && (
+        <div className="library-strip">
+          <div className="flex-row items-center gap-1">
+            <BookOpen size={14} className="text-muted" />
+            <span className="library-label">Saved Library ({savedDocs.length}):</span>
+          </div>
+          <div className="library-pills">
+            {savedDocs.map((doc) => (
+              <div
+                key={doc.document_id}
+                className={`library-pill ${activeDoc?.document_id === doc.document_id ? 'active' : ''}`}
+                onClick={() => handleSelectSaved(doc)}
+                title={`Open ${doc.filename} (${doc.page_count} pages)`}
+              >
+                <FileText size={13} />
+                <span className="pill-name">{doc.filename}</span>
+                <span className="pill-pages">{doc.page_count}p</span>
+                <button
+                  type="button"
+                  className="pill-del-btn"
+                  onClick={(e) => handleDeleteSaved(e, doc.document_id)}
+                  title="Delete from database"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

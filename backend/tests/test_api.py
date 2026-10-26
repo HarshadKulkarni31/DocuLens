@@ -12,12 +12,13 @@ from app.api.routes import (
     health_check,
     extract_document,
     upload_document,
+    list_documents,
     get_document_summary,
     ask_document_question,
     delete_document,
     document_store,
 )
-from app.schemas.document import AskRequest
+from app.schemas.document import AskRequest, ChatMessage
 
 
 def create_sample_pdf() -> bytes:
@@ -105,3 +106,37 @@ def test_ask_request_validation():
     # Too short
     with pytest.raises(ValidationError):
         AskRequest(question="a")
+
+
+def test_list_documents_and_sqlite_persistence():
+    pdf_bytes = create_sample_pdf()
+    file = UploadFile(
+        file=io.BytesIO(pdf_bytes),
+        filename="persistent_doc.pdf",
+    )
+    res = upload_document(file=file)
+    doc_id = res.document_id
+
+    # Test listing documents from SQLite
+    docs = list_documents()
+    assert any(d.document_id == doc_id for d in docs)
+
+    # Test clearing memory cache to verify SQLite rehydration
+    document_store._store.clear()
+    rehydrated = document_store.get(doc_id)
+    assert rehydrated is not None
+    assert rehydrated["filename"] == "persistent_doc.pdf"
+    assert len(rehydrated["pages"]) == 2
+    assert rehydrated["index"] is not None
+
+    # Test chat history validation
+    history = [
+        ChatMessage(role="user", content="Hello"),
+        ChatMessage(role="assistant", content="Hi, how can I help?"),
+    ]
+    req = AskRequest(question="What is this document about?", history=history)
+    assert len(req.history) == 2
+
+    # Clean up
+    delete_document(doc_id)
+
