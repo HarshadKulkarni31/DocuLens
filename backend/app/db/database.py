@@ -51,12 +51,14 @@ def init_db():
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chunks (
-                    chunk_id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chunk_id TEXT NOT NULL,
                     document_id TEXT NOT NULL,
                     page_number INTEGER NOT NULL,
                     chunk_index INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     embedding_bytes BLOB,
+                    UNIQUE(document_id, chunk_id),
                     FOREIGN KEY (document_id) REFERENCES documents (document_id) ON DELETE CASCADE
                 );
             """)
@@ -128,7 +130,7 @@ class DatabaseService:
 
                 conn.executemany(
                     """
-                    INSERT INTO chunks 
+                    INSERT OR REPLACE INTO chunks 
                     (chunk_id, document_id, page_number, chunk_index, text, embedding_bytes)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,

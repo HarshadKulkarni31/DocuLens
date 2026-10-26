@@ -243,8 +243,8 @@ export default function UploadPanel({
       {/* Persistent Document Library */}
       {savedDocs.length > 0 && (
         <div className="library-strip">
-          <div className="flex-row items-center gap-1">
-            <BookOpen size={14} className="text-muted" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <BookOpen size={14} style={{ color: 'var(--text-muted)' }} />
             <span className="library-label">Saved Library ({savedDocs.length}):</span>
           </div>
           <div className="library-pills">
